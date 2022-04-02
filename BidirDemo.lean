@@ -1,10 +1,6 @@
 def hello := "world"
 
-def Name := Nat
-
-instance : BEq Name where
-  beq := Nat.beq
-
+@[reducible] def Name := Nat
 
 inductive SType
   | tbool
@@ -19,6 +15,13 @@ def SType.beq : SType -> SType -> Bool
 instance : BEq SType where
   beq := SType.beq
 
+def SType.toString : SType -> String
+  | tbool => "Bool"
+  | tfun τ1 τ2 => "(" ++ toString τ1 ++ " --> " ++ toString τ2 ++ ")"
+
+instance : ToString SType where
+  toString := SType.toString
+
 inductive STerm
   | var : Name -> STerm
   | app : STerm -> STerm -> STerm
@@ -29,34 +32,75 @@ inductive STerm
   | ann : STerm -> SType -> STerm
   deriving Repr
 
+def STerm.toString : STerm -> String
+  | var n => ToString.toString n
+  | app t1 t2 => "(" ++ toString t1 ++ " " ++ toString t2 ++ ")"
+  | abs n t => "(λ " ++ ToString.toString n ++ ". " ++ toString t ++ ")"
+  | strue  => "true"
+  | sfalse => "false"
+  | ite c t e => "if " ++ toString c ++ " then " ++ toString t ++ " else " ++ toString e
+  | ann t τ => toString t ++ " : " ++ τ.toString
+
+instance : ToString STerm where
+  toString := STerm.toString
+
 def Ctx := List (Name × SType)
+@[reducible] def Result α := Sum String α
+
+def Option.elim (o : Option α) (err : Unit -> β) (f : α -> β) : β := match o with
+  | none   => err ()
+  | some v => f v
+
+def all_right (r1 : Result Unit) (r2 : Result Unit) (r3 : Result Unit) : Result Unit :=
+  match r1 with
+  | Sum.inl _ => r1
+  | _ => match r2 with
+         | Sum.inl _ => r2
+         | _ => r3
+
+def wrong_type (t : STerm) (τ : SType) : String :=
+  "Type mismatch: the term '" ++ toString t ++ "' doesn't check against '" ++ toString τ ++ "'"
+
+def expected_function (t : STerm) (τ : SType) : String :=
+  "The term '" ++ t.toString ++ "' is expected to have a function type while having type '" ++ τ.toString ++ "'"
 
 mutual
+  open Sum
   open STerm
   open SType
 
-  partial def check (Γ : Ctx) (t : STerm) (τ : SType) : Bool :=
+  partial def check (Γ : Ctx) (t : STerm) (τ : SType) : Result Unit :=
     match t with
     | abs n t1 =>
         match τ with
         | tfun τ1 τ2 => check (List.cons ⟨n, τ1⟩ Γ) t1 τ2
-        | _ => false
+        | _ => inl $ wrong_type t τ
     | STerm.ite t1 t2 t3 =>
-        (check Γ t1 tbool) && (check Γ t2 τ) && (check Γ t3 τ)
+        all_right (check Γ t1 tbool) (check Γ t2 τ) (check Γ t3 τ)
     | _ => match synth Γ t with
-           | some τ1 => τ == τ1
-           | none    => false
+           | inr τ1  => if τ == τ1
+              then inr ()
+              else inl $ "Incompatible types: expected '" ++ τ.toString ++ "' but got '" ++ τ1.toString ++ "'"
+           | inl err => inl err
 
-  partial def synth (Γ : Ctx) (t : STerm) : Option SType :=
+  partial def synth (Γ : Ctx) (t : STerm) : Result SType :=
     match t with
-    | var n => Γ.lookup n
+    | var n =>
+        (Γ.lookup n).elim
+          (λ () => inl $ "Unknown variable: " ++ toString n)
+          (λ τ => inr τ)
     | app t1 t2 =>
         match synth Γ t1 with
-        | some (tfun τ1 τ2) => if check Γ t2 τ1 then some τ2 else none
-        | _ => none
-    | strue | sfalse => some tbool
-    | ann t1 τ => if check Γ t1 τ then some τ else none
-    | _ => none
+        | inr (tfun τ1 τ2) => match check Γ t2 τ1 with
+            | inr ()  => inr τ2
+            | inl err => inl err
+        | inr τ => inl $ expected_function t1 τ
+        | err   => err
+    | strue | sfalse => inr tbool
+    | ann t1 τ => match check Γ t1 τ with
+        | inr ()  => inr τ
+        | inl err => inl err
+    | _ => inl $ "No rules to synthesize a type for a term '" ++ t.toString ++ "'"
 end
 
 namespace examples
@@ -84,5 +128,10 @@ def τ := tfun btob (tfun btob (tfun tbool tbool))
 def ex1 := ann body τ
 
 #eval synth [] ex1
+
+def τ_wrong := tfun btob (tfun btob tbool)
+def ex1_wrong := ann body τ_wrong
+
+#eval synth [] ex1_wrong
 
 end examples
