@@ -9,7 +9,7 @@ inductive SType
 
 def SType.beq : SType -> SType -> Bool
   | tbool, tbool => true
-  | tfun τ1 τ2, tfun σ1 σ2 => (beq τ1 σ1) && (beq τ1 σ2)
+  | tfun τ1 τ2, tfun σ1 σ2 => (beq τ1 σ1) && (beq τ2 σ2)
   | _, _ => false
 
 instance : BEq SType where
@@ -64,6 +64,9 @@ def wrong_type (t : STerm) (τ : SType) : String :=
 def expected_function (t : STerm) (τ : SType) : String :=
   "The term '" ++ t.toString ++ "' is expected to have a function type while having type '" ++ τ.toString ++ "'"
 
+def incompatible_types (t : STerm) (τ1 : SType) (τ2 : SType) : String :=
+  "Incompatible types: the term '" ++ t.toString ++ "' is expected to have type '" ++ τ1.toString ++ "' but got '" ++ τ2.toString ++ "'"
+
 mutual
   open Sum
   open STerm
@@ -80,7 +83,7 @@ mutual
     | _ => match synth Γ t with
            | inr τ1  => if τ == τ1
               then inr ()
-              else inl $ "Incompatible types: expected '" ++ τ.toString ++ "' but got '" ++ τ1.toString ++ "'"
+              else inl $ incompatible_types t τ τ1
            | inl err => inl err
 
   partial def synth (Γ : Ctx) (t : STerm) : Result SType :=
@@ -115,7 +118,7 @@ instance : OfNat Name n where
 def f : Name := 1
 def g : Name := 2
 def b : Name := 3
-def body :=
+def body1 :=
   abs f (
     abs g (
       abs b (
@@ -124,14 +127,30 @@ def body :=
     )
   )
 def btob := tfun tbool tbool
-def τ := tfun btob (tfun btob (tfun tbool tbool))
-def ex1 := ann body τ
+def τ1 := tfun btob (tfun btob (tfun tbool tbool))
+def ex1 := ann body1 τ1
 
 #eval synth [] ex1
 
-def τ_wrong := tfun btob (tfun btob tbool)
-def ex1_wrong := ann body τ_wrong
+def τ1_wrong := tfun btob (tfun btob tbool)
+def ex1_wrong := ann body1 τ1_wrong
 
 #eval synth [] ex1_wrong
+
+
+-- λ c. λ b. λ f. λ g. if c b then f else g : (Bool -> Bool) -> Bool -> ((Bool → Bool) → Bool) -> ((Bool → Bool) → Bool) -> ((Bool → Bool) → Bool)
+def c : Name := 4
+def ite2 := STerm.ite (app (var c) (var b)) (var f) (var g)
+def body2 := abs c (abs b (abs f (abs g ite2)))
+def bbtob := tfun btob tbool
+def τ2 := tfun btob (tfun tbool (tfun bbtob (tfun bbtob bbtob)))
+def ex2 := ann body2 τ2
+
+#eval synth [] ex2
+
+def τ2_wrong := tfun btob (tfun tbool (tfun bbtob (tfun btob bbtob)))
+def ex2_wrong := ann body2 τ2_wrong
+
+#eval synth [] ex2_wrong
 
 end examples
